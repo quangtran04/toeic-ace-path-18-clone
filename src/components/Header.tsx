@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -28,8 +29,12 @@ const Header = () => {
 
           {/* Desktop Buttons */}
           <div className="hidden md:flex items-center space-x-4">
-            <Button variant="ghost">Đăng nhập</Button>
-            <Button variant="hero">Đăng ký miễn phí</Button>
+            <Button variant="ghost" asChild>
+              <Link to="/login">Đăng nhập</Link>
+            </Button>
+            <Button variant="hero" asChild>
+              <Link to="/register">Đăng ký miễn phí</Link>
+            </Button>
           </div>
 
           {/* Mobile Menu Button */}
@@ -52,8 +57,12 @@ const Header = () => {
               <a href="/all-interfaces" className="text-foreground hover:text-toeic-blue transition-colors">Tất cả trang</a>
             </nav>
             <div className="flex flex-col space-y-2 pt-4">
-              <Button variant="ghost">Đăng nhập</Button>
-              <Button variant="hero">Đăng ký miễn phí</Button>
+              <Button variant="ghost" asChild>
+                <Link to="/login">Đăng nhập</Link>
+              </Button>
+              <Button variant="hero" asChild>
+                <Link to="/register">Đăng ký miễn phí</Link>
+              </Button>
             </div>
           </div>
         )}

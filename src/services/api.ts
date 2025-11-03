@@ -1,4 +1,6 @@
-const API_BASE_URL = 'https://tile-comfort-housing-bathrooms.trycloudflare.com/api';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'https://tile-comfort-housing-bathrooms.trycloudflare.com/api';
+const LOGIN_PATH_ENV = (import.meta as any).env?.VITE_LOGIN_PATH as string | undefined;
+const REGISTER_PATH_ENV = (import.meta as any).env?.VITE_REGISTER_PATH as string | undefined;
 
 // Types based on API responses
 export interface User {
@@ -91,6 +93,139 @@ export interface DashboardStats {
   recentResults: RecentResult[];
 }
 
+// Auth (VN) types
+export interface AuthLoginResponse {
+  message?: string;
+  token: string;
+  user?: any; // Backend returns Vietnamese snake_case fields; keep generic
+}
+
+export interface AuthRegisterRequest {
+  hoTen: string;
+  email: string;
+  matKhau: string;
+}
+
+// LoTrinh types (from backend response)
+export interface LoTrinhItem {
+  maLoTrinh: string;
+  tenLoTrinh: string;
+  moTa: string;
+  thoiGianDuKien: string;
+  capDo: string; // A1 | A2 | B1 | B2 | ...
+  loaiLoTrinh: string; // "Chung" | "Chuyên sâu" | ...
+  mucTieuDiem: number;
+  tongSoBai: number;
+  ngayTao: string;
+  kyNangTrongTam?: string | null; // Added optional field
+  chuDeBaiHoc?: string | null; // Added optional field
+}
+
+export interface LoTrinhResponse {
+  message: string;
+  total: number;
+  data: LoTrinhItem[];
+}
+
+// Lessons list and details
+export interface VideoItem {
+  maVideo: string;
+  tieuDeVideo: string;
+  duongDanVideo: string;
+  thoiLuongGiay: number;
+  ngayTao: string;
+}
+
+export interface BaiNgheItem {
+  maBaiNghe: string;
+  maBai: string;
+  tieuDe: string;
+  doKho?: string | null;
+  ngayTao: string;
+  duongDanFile?: string | null; // legacy
+  duongDanAudio?: string | null; // new
+  banGhiAm?: string | null; // transcript
+  tongCauHoi?: number;
+  cauHois?: CauHoiItem[];
+}
+
+export interface BaiDocItem {
+  maBaiDoc: string;
+  maBai: string;
+  tieuDe: string;
+  doKho?: string | null;
+  ngayTao: string;
+  duongDanFileTxt: string;
+}
+
+export interface LessonItem {
+  maBai: string;
+  maLoTrinh: string;
+  tenBai: string;
+  moTa: string | null;
+  thoiLuongPhut: number;
+  soThuTu: number;
+  ngayTao: string;
+  videos: VideoItem[];
+  baiNghes: BaiNgheItem[];
+  baiDocs: BaiDocItem[];
+}
+
+export interface LessonsResponse {
+  message: string;
+  total: number;
+  data: LessonItem[];
+}
+
+export interface LessonDetailResponse {
+  message: string;
+  data: LessonItem;
+}
+
+// Reading doc detail
+export interface DapAnItem {
+  maDapAn: number | string;
+  maCauHoi: string;
+  nhanDapAn: string; // A/B/C/D
+  noiDungDapAn: string;
+  thuTuHienThi: number;
+  laDapAnDung: boolean;
+}
+
+export interface CauHoiItem {
+  maCauHoi: string;
+  noiDungCauHoi: string;
+  giaiThich?: string | null;
+  diem: number;
+  thuTuHienThi: number;
+  dapAns: DapAnItem[];
+}
+
+export interface ReadingDocDetailResponse {
+  maBaiDoc: string;
+  maBai: string;
+  tieuDe: string;
+  doKho?: string | null;
+  noiDung?: string | null;
+  duongDanFileTxt: string; // may be YouTube link
+  ngayTao: string;
+  tongCauHoi: number;
+  cauHois: CauHoiItem[];
+}
+
+export interface ListeningDocDetail extends BaiNgheItem {
+  tongCauHoi?: number;
+  cauHois?: CauHoiItem[];
+}
+
+export interface ListeningDetailResponse {
+  message?: string;
+  data?: ListeningDocDetail;
+}
+
+// Lessons (Bài học)
+// (removed duplicate legacy LessonItem/LessonsResponse definitions)
+
 export interface TopicExercises {
   topic: string;
   exercises: Exercise[];
@@ -132,6 +267,25 @@ export class ApiService {
       console.error('API Request failed:', error);
       throw error;
     }
+  }
+
+  // Try multiple endpoints until one succeeds
+  private async requestWithFallback<T>(endpoints: string[], options: RequestInit = {}): Promise<T> {
+    let lastErr: any = null;
+    for (const ep of endpoints) {
+      try {
+        return await this.request<T>(ep, options);
+      } catch (e) {
+        lastErr = e;
+        // Log which endpoint failed for easier debugging
+        console.warn('API fallback failed for endpoint:', ep, e);
+        // continue to next endpoint
+      }
+    }
+    const err = new Error(`All endpoints failed. Tried: ${endpoints.join(', ')}. Last error: ${lastErr?.message || lastErr}`);
+    // attach extra field for consumers that want details
+    (err as any).endpointsTried = endpoints;
+    throw err;
   }
 
   // User API
@@ -252,15 +406,126 @@ export class ApiService {
     };
   }
 
+  // LoTrinh (Roadmaps)
+  async getAvailableRoadmaps(): Promise<LoTrinhResponse> {
+    // Some backends might expose different paths, try a few
+    return this.requestWithFallback<LoTrinhResponse>([
+      '/LoTrinh/co-san',
+      '/LoTrinh',
+      '/lotrinh/co-san',
+      '/lotrinh'
+    ], { method: 'GET', headers: { 'Accept': '*/*' } });
+  }
+
+  // Lessons APIs
+  async getLessons(): Promise<LessonsResponse> {
+    return this.requestWithFallback<LessonsResponse>([
+      '/BaiHoc/danh-sach',
+      '/BaiHoc',
+      '/baihoc/danh-sach',
+      '/baihoc'
+    ], { method: 'GET', headers: { 'Accept': '*/*' } });
+  }
+
+  async getLessonDetail(maBai: string): Promise<LessonDetailResponse> {
+    return this.requestWithFallback<LessonDetailResponse>([
+      `/BaiHoc/chi-tiet/${maBai}`,
+      `/BaiHoc/${maBai}`,
+      `/baihoc/chi-tiet/${maBai}`,
+      `/baihoc/${maBai}`
+    ]);
+  }
+
+  async getReadingDocDetail(maBaiDoc: string): Promise<ReadingDocDetailResponse> {
+    const res = await this.requestWithFallback<any>([
+      `/BaiDoc/chi-tiet/${maBaiDoc}`,
+      `/BaiDoc/${maBaiDoc}`,
+      `/baidoc/chi-tiet/${maBaiDoc}`,
+      `/baidoc/${maBaiDoc}`
+    ]);
+    return res?.data ?? res;
+  }
+
+  async getListeningDetail(maBaiNghe: string): Promise<ListeningDocDetail> {
+    const res: any = await this.requestWithFallback<any>([
+      `/BaiNghe/chi-tiet/${maBaiNghe}`,
+      `/BaiNghe/chi-tiet?maBaiNghe=${encodeURIComponent(maBaiNghe)}`,
+      `/BaiNghe/${maBaiNghe}`,
+      `/bainghe/chi-tiet/${maBaiNghe}`,
+      `/bainghe/chi-tiet?maBaiNghe=${encodeURIComponent(maBaiNghe)}`,
+      `/bainghe/${maBaiNghe}`
+    ]);
+    // Unwrap common response envelopes and arrays
+    const data = (res && typeof res === 'object') ? (res.data ?? res) : res;
+    if (Array.isArray(data)) {
+      // Try to find by id or fallback to first
+      const found = data.find((it: any) => it?.maBaiNghe === maBaiNghe) ?? data[0];
+      return found as ListeningDocDetail;
+    }
+    // Some APIs may nest again under 'item' or use different casing; keep it simple here
+    return data as ListeningDocDetail;
+  }
+
+  // (removed duplicate legacy getLessons)
+
+  // Auth (VN) APIs
+  async authLogin(email: string, matKhau: string): Promise<AuthLoginResponse> {
+    // Send a permissive payload for compatibility across endpoints
+    const body = JSON.stringify({ email, matKhau, password: matKhau, passwordHash: matKhau, username: email });
+    const candidates = [
+      // Env override first
+      ...(LOGIN_PATH_ENV ? [LOGIN_PATH_ENV] : []),
+      // VN common
+      '/Auth/dang-nhap', '/NguoiDung/dang-nhap', '/TaiKhoan/dang-nhap', '/auth/dang-nhap',
+      '/Auth/dangnhap', '/NguoiDung/dangnhap', '/TaiKhoan/dangnhap', '/auth/dangnhap',
+      // English common
+      '/Auth/login', '/auth/login', '/Account/login', '/account/login', '/login', '/Login',
+      // Legacy in this repo
+      '/users/login', '/Users/login'
+    ];
+    const res = await this.requestWithFallback<any>(candidates, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': '*/*' }, body });
+
+    const token: string | undefined = res?.token ?? res?.data?.token;
+    if (!token) throw new Error('Đăng nhập thất bại: thiếu token');
+
+    this.token = token;
+    localStorage.setItem('authToken', token);
+    if (res?.user) localStorage.setItem('currentUser', JSON.stringify(res.user));
+
+    return { message: res?.message, token, user: res?.user } as AuthLoginResponse;
+  }
+
+  async authRegister(req: AuthRegisterRequest): Promise<any> {
+    const body = JSON.stringify({
+      hoTen: req.hoTen,
+      email: req.email,
+      matKhau: req.matKhau,
+      // compatibility fields
+      username: req.hoTen,
+      password: req.matKhau,
+      passwordHash: req.matKhau
+    });
+    const candidates = [
+      ...(REGISTER_PATH_ENV ? [REGISTER_PATH_ENV] : []),
+      '/Auth/dang-ky', '/NguoiDung/dang-ky', '/TaiKhoan/dang-ky', '/auth/dang-ky',
+      '/Auth/dangky', '/NguoiDung/dangky', '/TaiKhoan/dangky', '/auth/dangky',
+      '/Auth/register', '/auth/register', '/Account/register', '/account/register', '/register', '/Register',
+      '/users/register', '/Users/register'
+    ];
+    return this.requestWithFallback<any>(candidates, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': '*/*' }, body });
+  }
+
   // Utility methods
   logout(): void {
     this.token = null;
     localStorage.removeItem('authToken');
+    localStorage.removeItem('currentUser');
     localStorage.removeItem('userId');
   }
 
   isAuthenticated(): boolean {
-    return true; // Always authenticated for testing
+    const tok = this.token || localStorage.getItem('authToken');
+    return !!tok;
   }
 
   getCurrentUserId(): number {

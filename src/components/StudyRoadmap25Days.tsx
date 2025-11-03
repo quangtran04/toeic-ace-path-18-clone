@@ -15,18 +15,16 @@ import {
   Bookmark,
   BookOpen
 } from "lucide-react";
-import { apiService, LearningPlan, Exercise } from "@/services/api";
-import { format, parseISO, startOfWeek, endOfWeek, isWithinInterval } from "date-fns";
-import { vi } from "date-fns/locale";
+import { apiService, type LessonsResponse, type LessonItem, type LoTrinhItem } from "@/services/api";
 
 
 interface DayData {
   day: number;
   topic: string;
   status: 'completed' | 'current' | 'locked';
-  score: number | null;
-  plan: LearningPlan;
-  exercise?: Exercise;
+  maBai: string;
+  moTa?: string | null;
+  thoiLuongPhut?: number;
 }
 
 interface WeekData {
@@ -37,8 +35,6 @@ interface WeekData {
 
 const StudyRoadmap25Days = () => {
   const navigate = useNavigate();
-  const [learningPlan, setLearningPlan] = useState<LearningPlan[]>([]);
-  const [exercises, setExercises] = useState<Map<number, Exercise>>(new Map());
   const [weeks, setWeeks] = useState<WeekData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,64 +43,60 @@ const StudyRoadmap25Days = () => {
     fetchRoadmapData();
   }, []);
 
+  const getErrorMessage = (err: any): string => {
+    if (!err) return 'Lỗi không xác định.';
+    if (typeof err === 'string') return err;
+    if (err.message) return err.message;
+    if (err.status) return `HTTP ${err.status}`;
+    try { return JSON.stringify(err); } catch { return 'Lỗi không xác định.'; }
+  };
+
   const fetchRoadmapData = async () => {
     try {
       setLoading(true);
-      const userId = apiService.getCurrentUserId();
+      // Fetch lessons and roadmaps
+      const [lessonsRes, roadmapsRes] = await Promise.all([
+        apiService.getLessons(),
+        apiService.getAvailableRoadmaps(),
+      ]);
 
-      const planData = await apiService.getLearningPlan(userId);
-      setLearningPlan(planData);
+      const lessons = lessonsRes.data || [];
+      const roadmaps = (roadmapsRes.data || []) as LoTrinhItem[];
 
-      // Fetch exercise details
-      const exerciseMap = new Map<number, Exercise>();
-      for (const plan of planData) {
-        try {
-          const exercise = await apiService.getExerciseById(plan.exerciseId);
-          exerciseMap.set(plan.exerciseId, exercise);
-        } catch (err) {
-          console.error(`Failed to fetch exercise ${plan.exerciseId}:`, err);
-        }
-      }
-      setExercises(exerciseMap);
+      // Sort lộ trình theo số trong mã: LT001 < LT002 < ...
+      const loTrinhOrder = [...new Set(lessons.map(l => l.maLoTrinh))]
+        .sort((a, b) => parseInt(a.replace(/\D/g, "")) - parseInt(b.replace(/\D/g, "")));
 
-      // Group into weeks
-      const sortedPlans = [...planData].sort((a, b) => 
-        new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
-      );
+      const titleMap = new Map<string, string>();
+      roadmaps.forEach(r => {
+        titleMap.set(r.maLoTrinh, `${r.capDo} - ${r.tenLoTrinh.replace(/^TOEIC\s+[A-Z0-9]+\s+-\s+/i, "")}`);
+      });
 
-      const weekGroups: WeekData[] = [];
-      let currentWeek: DayData[] = [];
-      let weekNumber = 1;
-      
-      sortedPlans.forEach((plan, index) => {
-        const exercise = exerciseMap.get(plan.exerciseId);
-        const dayData: DayData = {
-          day: index + 1,
-          topic: exercise?.title || exercise?.topic || `Bài ${index + 1}`,
-          status: plan.status === 'Completed' ? 'completed' : 
-                  plan.status === 'InProgress' ? 'current' : 'locked',
-          score: null, // Score sẽ được lấy từ submissions nếu cần
-          plan,
-          exercise
-        };
+      const weekGroups: WeekData[] = loTrinhOrder.map((maLoTrinh, idx) => {
+        const items = lessons
+          .filter(l => l.maLoTrinh === maLoTrinh)
+          .sort((a, b) => a.soThuTu - b.soThuTu);
 
-        currentWeek.push(dayData);
+        const days: DayData[] = items.map((l, i) => ({
+          day: i + 1,
+          topic: (l.tenBai || `Bài ${i + 1}`).trim(),
+          status: idx === 0 && i === 0 ? 'current' : 'locked',
+          maBai: l.maBai,
+          moTa: l.moTa,
+          thoiLuongPhut: l.thoiLuongPhut,
+        }));
 
-        // Group by 7 days per week
-        if (currentWeek.length === 7 || index === sortedPlans.length - 1) {
-          weekGroups.push({
-            week: weekNumber,
-            title: `Tuần ${weekNumber}: ${getWeekTitle(weekNumber)}`,
-            days: currentWeek
-          });
-          currentWeek = [];
-          weekNumber++;
-        }
+        return {
+          week: idx + 1,
+          title: `Tuần ${idx + 1}: ${titleMap.get(maLoTrinh) || maLoTrinh}`,
+          days,
+        } as WeekData;
       });
 
       setWeeks(weekGroups);
     } catch (err) {
-      setError('Không thể tải lộ trình học tập. Vui lòng thử lại.');
+      const msg = getErrorMessage(err);
+      setError(`Không thể tải lộ trình học tập. ${msg}`);
       console.error('Error fetching roadmap data:', err);
     } finally {
       setLoading(false);
@@ -121,25 +113,14 @@ const StudyRoadmap25Days = () => {
     return titles[weekNum - 1] || 'Học tập';
   };
 
-  const handleStartExercise = (dayData: DayData) => {
-    if (!dayData.exercise) return;
-
-    switch (dayData.exercise.exerciseType) {
-      case 'Reading':
-        navigate(`/reading-lesson/${dayData.exercise.id}`);
-        break;
-      case 'Listening':
-        navigate(`/listening-lesson/${dayData.exercise.id}`);
-        break;
-      case 'Writing':
-        navigate(`/writing-lesson/${dayData.exercise.id}`);
-        break;
-      case 'Speaking':
-        navigate(`/speaking-challenge/${dayData.exercise.id}`);
-        break;
-      default:
-        navigate(`/lesson/${dayData.exercise.id}`);
+  const handleStartLesson = (dayData: DayData) => {
+    // Ngày 1: trang giới thiệu tĩnh
+    if (dayData.day === 1 && /^BH001/i.test(dayData.maBai)) {
+      navigate('/day1-intro');
+      return;
     }
+    // Các ngày khác: trang tổng quan bài học theo maBai
+    navigate(`/lesson/overview/${dayData.maBai}`);
   };
 
   const getStatusIcon = (status: string) => {
@@ -297,8 +278,8 @@ const StudyRoadmap25Days = () => {
                             Ngày {day.day}: {day.topic}
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {day.exercise?.exerciseType || 'Bài học'}
-                            {day.plan.startTime && ` • ${format(parseISO(day.plan.startTime), 'dd/MM/yyyy')}`}
+                            Bài học
+                            {day.thoiLuongPhut ? ` • ${day.thoiLuongPhut} phút` : ''}
                           </div>
                         </div>
                       </div>
@@ -312,17 +293,16 @@ const StudyRoadmap25Days = () => {
                         {day.status === "current" && (
                           <Button 
                             size="sm"
-                            onClick={() => handleStartExercise(day)}
-                            disabled={!day.exercise}
+                            onClick={() => handleStartLesson(day)}
                           >
                             <ArrowRight className="w-4 h-4 mr-2" />
                             Học ngay
                           </Button>
                         )}
                         {day.status === "locked" && (
-                          <Button size="sm" variant="outline" disabled>
-                            <Bookmark className="w-4 h-4 mr-2" />
-                            Chưa mở
+                          <Button size="sm" variant="outline" onClick={() => handleStartLesson(day)}>
+                            <ArrowRight className="w-4 h-4 mr-2" />
+                            Học ngay
                           </Button>
                         )}
                       </div>
@@ -343,7 +323,7 @@ const StudyRoadmap25Days = () => {
           onClick={() => {
             const currentDay = weeks.flatMap(w => w.days).find(d => d.status === "current");
             if (currentDay) {
-              handleStartExercise(currentDay);
+              handleStartLesson(currentDay);
             } else {
               navigate('/dashboard');
             }

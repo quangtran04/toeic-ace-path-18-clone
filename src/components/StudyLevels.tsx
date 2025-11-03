@@ -1,8 +1,10 @@
+import { useEffect, useMemo, useState, type ComponentType } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
   GraduationCap, 
   Target, 
@@ -16,89 +18,128 @@ import {
   ArrowRight,
   Users
 } from "lucide-react";
+import { apiService, type LoTrinhItem } from "@/services/api";
 
 const StudyLevels = () => {
   const navigate = useNavigate();
-  const levels = [
-    {
-      id: 'A1',
-      name: 'A1 - Cơ bản',
-      description: 'Dành cho người mới bắt đầu học tiếng Anh',
-      color: 'bg-green-500',
-      progress: 85,
-      duration: '2-3 tháng',
-      targetScore: '300-400 điểm TOEIC',
-      skills: [
-        { name: 'Từ vựng cơ bản', icon: BookOpen, level: 'Cần thiết' },
-        { name: 'Ngữ pháp đơn giản', icon: PenTool, level: 'Cần thiết' },
-        { name: 'Nghe hiểu cơ bản', icon: Headphones, level: 'Cần thiết' }
-      ],
-      lessons: [
-        'Giới thiệu bản thân',
-        'Gia đình và bạn bè', 
-        'Công việc hàng ngày',
-        'Mua sắm cơ bản',
-        'Thời gian và ngày tháng'
-      ],
-      completed: 17,
-      total: 20
-    },
-    {
-      id: 'A2',
-      name: 'A2 - Sơ cấp',
-      description: 'Phát triển kỹ năng giao tiếp thường ngày',
-      color: 'bg-blue-500',
-      progress: 45,
-      duration: '3-4 tháng',
-      targetScore: '400-600 điểm TOEIC',
-      skills: [
-        { name: 'Giao tiếp thường ngày', icon: Users, level: 'Phát triển' },
-        { name: 'Đọc hiểu văn bản ngắn', icon: BookOpen, level: 'Phát triển' },
-        { name: 'Viết email đơn giản', icon: PenTool, level: 'Phát triển' }
-      ],
-      lessons: [
-        'Giao tiếp điện thoại',
-        'Đặt lịch hẹn',
-        'Thảo luận kế hoạch',
-        'Mô tả trải nghiệm',
-        'Đưa ra ý kiến'
-      ],
-      completed: 9,
-      total: 20
-    },
-    {
-      id: 'B1',
-      name: 'B1 - Trung cấp',
-      description: 'Làm chủ tiếng Anh trong môi trường làm việc',
-      color: 'bg-purple-500',
-      progress: 0,
-      duration: '4-6 tháng',
-      targetScore: '600-785 điểm TOEIC',
-      skills: [
-        { name: 'Thuyết trình công việc', icon: Users, level: 'Nâng cao' },
-        { name: 'Đọc báo cáo kinh doanh', icon: BookOpen, level: 'Nâng cao' },
-        { name: 'Viết email chuyên nghiệp', icon: PenTool, level: 'Nâng cao' }
-      ],
-      lessons: [
-        'Họp và thảo luận',
-        'Thuyết trình dự án',
-        'Đàm phán kinh doanh',
-        'Báo cáo kết quả',
-        'Giải quyết vấn đề'
-      ],
-      completed: 0,
-      total: 25
-    }
-  ];
+
+  // Remote data from backend "LoTrinh/co-san"
+  const [roadmaps, setRoadmaps] = useState<LoTrinhItem[] | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await apiService.getAvailableRoadmaps();
+        if (!isMounted) return;
+        setRoadmaps(res.data || []);
+      } catch (e: any) {
+        if (!isMounted) return;
+        setError(e?.message || "Không thể tải lộ trình. Vui lòng thử lại.");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    fetchData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Helper to parse backend list strings like: "'item1','item2'"
+  const parseList = (raw?: string | null): string[] => {
+    if (!raw) return [];
+    // Split by comma, remove quotes and spaces, handle newlines
+    return raw
+      .split(/,\s*/)
+      .map((s) => s.replace(/^['"]|['"]$/g, "").trim())
+      .filter(Boolean);
+  };
+
+  type Skill = { name: string; icon: ComponentType<any>; level: string };
+  type UiLevel = {
+    id: string;
+    code?: string;
+    name: string;
+    description: string;
+    color: string;
+    progress: number;
+    duration: string;
+    targetScore: string;
+    skills: Skill[];
+    lessons: string[];
+    completed: number;
+    total: number;
+  };
+
+  // Map backend roadmaps to UI levels when available
+  const levels = useMemo<UiLevel[]>(() => {
+    if (!roadmaps || roadmaps.length === 0) return [] as UiLevel[];
+    // Hide A1 - Chuyên sâu entirely
+    const filtered = roadmaps.filter((r) => {
+      const isA1 = r.capDo === 'A1';
+      const isChuyenSau = (r.loaiLoTrinh && /chuyên\s*sâu/i.test(r.loaiLoTrinh)) || /chuyên\s*sâu/i.test(r.tenLoTrinh || '');
+      return !(isA1 && isChuyenSau);
+    });
+    return filtered.map((r) => {
+      const skillNames = parseList(r.kyNangTrongTam);
+      const lessonNames = parseList(r.chuDeBaiHoc);
+      const skills = skillNames.map((name) => ({
+        name,
+        icon:
+          /từ vựng/i.test(name) ? BookOpen :
+          /ngữ pháp|viết/i.test(name) ? PenTool :
+          Headphones,
+        level: /nâng cao/i.test(name) ? 'Nâng cao' : /cơ bản/i.test(name) ? 'Cần thiết' : 'Trọng tâm',
+      }));
+      const lessons = lessonNames;
+
+      return {
+        id: r.maLoTrinh,     // unique key
+        code: r.capDo,       // display in circle
+        name: `${r.capDo} - ${r.tenLoTrinh.replace(/^TOEIC\s+[A-Z0-9]+\s+-\s+/i, "")}`,
+        description: r.moTa,
+        color:
+          r.capDo === 'A1' ? 'bg-green-500' :
+          r.capDo === 'A2' ? 'bg-blue-500' :
+          r.capDo === 'B1' ? 'bg-purple-500' :
+          r.capDo === 'B2' ? 'bg-orange-500' : 'bg-slate-500',
+        progress: 0, // Backend chưa cung cấp tiến độ
+        duration: r.thoiGianDuKien,
+        targetScore: `${r.mucTieuDiem} điểm TOEIC`,
+        skills,
+        lessons,
+        completed: 0,
+        total: r.tongSoBai || lessons.length,
+      } as UiLevel;
+    });
+  }, [roadmaps]);
 
   const getCurrentLevel = () => {
     return levels.find(level => level.progress > 0 && level.progress < 100) || levels[0];
   };
 
-  const currentLevel = getCurrentLevel();
+  const currentLevel = levels.length > 0 ? getCurrentLevel() : null;
 
   return (
     <div className="space-y-8">
+      {/* Loading / Error States */}
+      {loading && (
+        <Alert className="border-blue-200 bg-blue-50">
+          <AlertTitle>Đang tải lộ trình...</AlertTitle>
+          <AlertDescription>Vui lòng đợi trong giây lát.</AlertDescription>
+        </Alert>
+      )}
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Lỗi tải dữ liệu</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
       {/* Header */}
       <div className="text-center space-y-4">
         <div className="w-16 h-16 bg-gradient-to-r from-toeic-blue to-toeic-success rounded-full flex items-center justify-center mx-auto">
@@ -112,49 +153,56 @@ const StudyLevels = () => {
         </div>
       </div>
 
+      {/* Empty state when no roadmaps to show */}
+      {!loading && !error && levels.length === 0 && (
+        <div className="text-center text-muted-foreground">Chưa có lộ trình khả dụng.</div>
+      )}
+
       {/* Current Level Progress */}
-      <Card className="bg-gradient-to-r from-toeic-blue/10 to-toeic-success/10 border-none">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-xl text-toeic-navy">
-                Cấp độ hiện tại: {currentLevel.name}
-              </CardTitle>
-              <CardDescription className="text-base">
-                {currentLevel.description}
-              </CardDescription>
+      {currentLevel && currentLevel.progress > 0 && (
+        <Card className="bg-gradient-to-r from-toeic-blue/10 to-toeic-success/10 border-none">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-xl text-toeic-navy">
+                  Cấp độ hiện tại: {currentLevel.name}
+                </CardTitle>
+                <CardDescription className="text-base">
+                  {currentLevel.description}
+                </CardDescription>
+              </div>
+              <Badge className={`${currentLevel.color} text-white px-4 py-2`}>
+                {currentLevel.progress}% hoàn thành
+              </Badge>
             </div>
-            <Badge className={`${currentLevel.color} text-white px-4 py-2`}>
-              {currentLevel.progress}% hoàn thành
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <Progress value={currentLevel.progress} className="h-3" />
-            <div className="grid md:grid-cols-3 gap-4 text-center">
-              <div className="p-3 bg-white/50 rounded-lg">
-                <div className="text-2xl font-bold text-toeic-blue">
-                  {currentLevel.completed}/{currentLevel.total}
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <Progress value={currentLevel.progress} className="h-3" />
+              <div className="grid md:grid-cols-3 gap-4 text-center">
+                <div className="p-3 bg-white/50 rounded-lg">
+                  <div className="text-2xl font-bold text-toeic-blue">
+                    {currentLevel.completed}/{currentLevel.total}
+                  </div>
+                  <p className="text-sm text-muted-foreground">Bài học</p>
                 </div>
-                <p className="text-sm text-muted-foreground">Bài học</p>
-              </div>
-              <div className="p-3 bg-white/50 rounded-lg">
-                <div className="text-lg font-bold text-toeic-success">
-                  {currentLevel.duration}
+                <div className="p-3 bg-white/50 rounded-lg">
+                  <div className="text-lg font-bold text-toeic-success">
+                    {currentLevel.duration}
+                  </div>
+                  <p className="text-sm text-muted-foreground">Thời gian dự kiến</p>
                 </div>
-                <p className="text-sm text-muted-foreground">Thời gian dự kiến</p>
-              </div>
-              <div className="p-3 bg-white/50 rounded-lg">
-                <div className="text-sm font-bold text-toeic-warning">
-                  {currentLevel.targetScore}
+                <div className="p-3 bg-white/50 rounded-lg">
+                  <div className="text-sm font-bold text-toeic-warning">
+                    {currentLevel.targetScore}
+                  </div>
+                  <p className="text-sm text-muted-foreground">Mục tiêu điểm số</p>
                 </div>
-                <p className="text-sm text-muted-foreground">Mục tiêu điểm số</p>
               </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Level Details */}
       <div className="grid gap-6">
@@ -164,7 +212,7 @@ const StudyLevels = () => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
                   <div className={`w-12 h-12 ${level.color} rounded-full flex items-center justify-center text-white font-bold text-lg`}>
-                    {level.id}
+                    {level.code ?? level.id}
                   </div>
                   <div>
                     <CardTitle className="text-xl text-toeic-navy">{level.name}</CardTitle>
@@ -200,17 +248,21 @@ const StudyLevels = () => {
                     Kỹ năng trọng tâm
                   </h4>
                   <div className="space-y-2">
-                    {level.skills.map((skill, skillIndex) => (
-                      <div key={skillIndex} className="flex items-center justify-between p-2 bg-white/50 rounded">
-                        <div className="flex items-center space-x-2">
-                          <skill.icon className="w-4 h-4 text-toeic-blue" />
-                          <span className="text-sm">{skill.name}</span>
+                    {level.skills.length > 0 ? (
+                      level.skills.map((skill, skillIndex) => (
+                        <div key={skillIndex} className="flex items-center justify-between p-2 bg-white/50 rounded">
+                          <div className="flex items-center space-x-2">
+                            <skill.icon className="w-4 h-4 text-toeic-blue" />
+                            <span className="text-sm">{skill.name}</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs">
+                            {skill.level}
+                          </Badge>
                         </div>
-                        <Badge variant="outline" className="text-xs">
-                          {skill.level}
-                        </Badge>
-                      </div>
-                    ))}
+                      ))
+                    ) : (
+                      <div className="text-sm text-muted-foreground">Chưa cập nhật</div>
+                    )}
                   </div>
                 </div>
 
@@ -221,20 +273,24 @@ const StudyLevels = () => {
                     Chủ đề bài học
                   </h4>
                   <div className="space-y-1">
-                    {level.lessons.map((lesson, lessonIndex) => (
-                      <div key={lessonIndex} className="flex items-center space-x-2 p-2 bg-white/30 rounded text-sm">
-                        {lessonIndex < level.completed ? (
-                          <CheckCircle className="w-4 h-4 text-green-500" />
-                        ) : lessonIndex === level.completed ? (
-                          <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
-                            <div className="w-2 h-2 bg-white rounded-full" />
-                          </div>
-                        ) : (
-                          <div className="w-4 h-4 rounded-full border-2 border-gray-300" />
-                        )}
-                        <span className={lessonIndex < level.completed ? 'text-muted-foreground line-through' : ''}>{lesson}</span>
-                      </div>
-                    ))}
+                    {level.lessons.length > 0 ? (
+                      level.lessons.map((lesson, lessonIndex) => (
+                        <div key={lessonIndex} className="flex items-center space-x-2 p-2 bg-white/30 rounded text-sm">
+                          {lessonIndex < level.completed ? (
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                          ) : lessonIndex === level.completed ? (
+                            <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
+                              <div className="w-2 h-2 bg-white rounded-full" />
+                            </div>
+                          ) : (
+                            <div className="w-4 h-4 rounded-full border-2 border-gray-300" />
+                          )}
+                          <span className={lessonIndex < level.completed ? 'text-muted-foreground line-through' : ''}>{lesson}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-muted-foreground">Chưa cập nhật</div>
+                    )}
                   </div>
                 </div>
               </div>
